@@ -1,0 +1,66 @@
+---
+## Written by santaricotta - github.com/santaricotta
+## Licensed under AGPL3.0 or later
+
+- name: Maintain authorized_key file
+  hosts: all
+  become: true
+  become_method: ansible.builtin.sudo
+  become_user: root
+
+  vars:
+    ssh_pubkey_dir: "ssh_pubkey_files"
+    target_user: "root"  # Default to root if unspecified
+    user_home: ""
+    enable_debug: false # Changing this to true will enable Debug tasks. 
+
+  tasks:
+    - name: Get target_user's home directory
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ target_user }}"
+      register: user_info
+
+    - name: Debug - print out user_info
+      ansible.builtin.debug:
+        var: user_info
+      when: (user_info is defined) and enable_debug
+
+    - name: Set user home directory fact
+      ansible.builtin.set_fact:
+        user_home: "{{ user_info.ansible_facts.getent_passwd[target_user][4] }}"
+
+    - name: Collect public keys
+      ansible.builtin.set_fact:
+        key_contents: "{{ key_contents | default([]) + [lookup('file', ssh_pubkey_dir ~ '/' ~ item)] }}"
+      loop: "{{ (default_key_files | default([])) + (extra_key_files | default([])) }}"
+      no_log: true  # Do not log this, some might find it too sensitive.
+
+    - name: Debug - print out key_contents
+      # Duplicates will be resolved in the next task; ignore them here.
+      ansible.builtin.debug:
+        var: key_contents
+      when: (key_contents is defined) and enable_debug
+
+    - name: Create compound authorized_keys file and replace existing one
+      ansible.posix.authorized_key:
+        path: "{{ user_home }}/.ssh/authorized_keys"
+        manage_dir: true
+        user: "{{ target_user }}"
+        exclusive: true # Eliminates duplicates if keys exist in multiple key files.
+        state: present
+        key: "{{ key_contents | join('\n') }}"
+
+    - name: Configure sshd to disable reverse DNS lookup
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?UseDNS.*'
+        line: 'UseDNS no'
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Restart SSH
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
+        state: restarted

@@ -1,0 +1,7 @@
+[targets]
+
+# Even though admins.pub is unspecified, it will be added as it is specified in group-vars
+# Even though cto.pub is a part of admins.pub and specified here separately, it will only 
+# be added once because of exclusive=true in ansible.posix.authorized_key.
+
+testtarget01 ansible_host=10.20.30.40 extra_key_files='["webdevelopers.pub","cto.pub"]'
